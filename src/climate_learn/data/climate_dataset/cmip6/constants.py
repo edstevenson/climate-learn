@@ -1,3 +1,4 @@
+# seems to just be a copy of constants/cmip6_constants.py but missing units constants. Maybe it is not needed?
 NAME_TO_VAR = {
     "geopotential": "zg",
     "u_component_of_wind": "u",

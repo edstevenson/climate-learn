@@ -1,3 +1,5 @@
+# for CONTINUOUS sequence prediction 
+
 # Standard library
 import math
 import os

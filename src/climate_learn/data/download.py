@@ -1,3 +1,5 @@
+# Contains functions for donwloading raw climate data from the internet
+
 # Standard library
 from argparse import ArgumentParser
 from ftplib import FTP

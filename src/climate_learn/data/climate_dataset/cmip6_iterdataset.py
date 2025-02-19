@@ -1,3 +1,5 @@
+# implementation identical to era5_iterdataset.py except with adjustment for 6-hour timestep
+
 # Standard library
 import math
 import os

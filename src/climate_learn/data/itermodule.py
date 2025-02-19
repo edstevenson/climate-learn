@@ -1,3 +1,5 @@
+# Contains IterDataModule, which is a PyTorch Lightning DataModule for climate data processing.
+
 # Standard library
 import copy
 import glob
@@ -23,8 +25,38 @@ from .iterdataset import (
 
 
 class IterDataModule(pl.LightningDataModule):
-    """ClimateLearn's iter data module interface. Encapsulates dataset/task-specific
-    data modules."""
+    """
+    PyTorch Lightning DataModule for climate data processing.
+    
+    This module handles:
+    1. Loading and preprocessing climate data for different tasks
+    2. Setting up train/val/test data loaders
+    3. Managing data transformations and batching
+    4. Supporting different prediction tasks:
+       - Direct forecasting (single time step)
+       - Iterative forecasting (multiple time steps)
+       - Continuous forecasting (variable lead times)
+       - Downscaling (spatial resolution enhancement)
+    
+    Attributes:
+        task (str): Type of prediction task
+        inp_root_dir (str): Directory containing input data
+        out_root_dir (str): Directory containing output/target data
+        in_vars (list): Input variables to use
+        out_vars (list): Output variables to predict
+        src (Optional[str]): Source dataset identifier
+        history (int): Number of historical time steps to use
+        window (int): Window size for temporal processing
+        pred_range (int): Prediction horizon (in time steps)
+        random_lead_time (bool): Whether to use random lead times
+        max_pred_range (int): Maximum prediction horizon
+        hrs_each_step (int): Hours between time steps
+        subsample (int): Subsampling factor for data
+        buffer_size (int): Size of shuffle buffer
+        batch_size (int): Number of samples per batch
+        num_workers (int): Number of data loading workers
+        pin_memory (bool): Whether to pin memory in data loading
+    """
 
     def __init__(
         self,
@@ -48,6 +80,8 @@ class IterDataModule(pl.LightningDataModule):
     ):
         super().__init__()
         self.save_hyperparameters(logger=False)
+        
+        # Configure dataset class and arguments based on task
         if task in ("direct-forecasting", "iterative-forecasting"):
             self.dataset_caller = DirectForecast
             self.dataset_arg = {
@@ -73,6 +107,7 @@ class IterDataModule(pl.LightningDataModule):
             self.dataset_arg = {}
             self.collate_fn = collate_fn
 
+        # Set up file lists for each data partition
         self.inp_lister_train = sorted(
             glob.glob(os.path.join(inp_root_dir, "train", "*.npz"))
         )
@@ -118,6 +153,7 @@ class IterDataModule(pl.LightningDataModule):
             "iterative-forecasting",
             "continuous-forecasting",
         ]
+        # Shape: [batch, time_steps, variables, lat, lon] for forecasting
         if self.hparams.task in forecasting_tasks:
             in_size = torch.Size(
                 [
@@ -128,6 +164,7 @@ class IterDataModule(pl.LightningDataModule):
                     lon,
                 ]
             )
+        # Shape: [batch, variables, lat, lon] for downscaling
         elif self.hparams.task == "downscaling":
             in_size = torch.Size(
                 [self.hparams.batch_size, len(self.hparams.in_vars), lat, lon]
@@ -168,6 +205,16 @@ class IterDataModule(pl.LightningDataModule):
         return new_clim_dict
 
     def setup(self, stage: Optional[str] = None):
+        """
+        Set up datasets for training, validation, and testing.
+        
+        Creates dataset objects with appropriate configurations for each split:
+        - Training: Includes shuffling and data augmentation
+        - Validation/Test: No shuffling, used for evaluation
+        
+        Args:
+            stage: Optional stage identifier ('fit' or 'test')
+        """
         # load datasets only if they're not loaded already
         if stage != "test":
             if not self.data_train and not self.data_val and not self.data_test:
@@ -272,6 +319,20 @@ class IterDataModule(pl.LightningDataModule):
 
 
 def collate_fn(batch):
+    """
+    Collate function for batching data samples.
+    
+    Handles:
+    1. Converting dictionary features to tensors
+    2. Stacking batches of samples
+    3. Special processing for extreme temperature masks
+    
+    Args:
+        batch: List of (input, output) tuples
+        
+    Returns:
+        Tuple of (inputs, outputs, [mask], variable_names) where mask is optional
+    """
     def handle_dict_features(t: Dict[str, torch.tensor]) -> torch.tensor:
         t = torch.stack(tuple(t.values()))
         if len(t.size()) == 4:
@@ -312,6 +373,9 @@ def collate_fn(batch):
 
 
 def collate_fn_continuous(batch):
+    """
+    Collate function for continuous forecasting tasks.
+    """
     def handle_dict_features(t: Dict[str, torch.tensor]) -> torch.tensor:
         t = torch.stack(tuple(t.values()))
         if len(t.size()) == 4:

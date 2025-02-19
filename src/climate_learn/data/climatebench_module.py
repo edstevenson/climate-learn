@@ -1,3 +1,5 @@
+# Wraps the ClimateBenchDataset into a PyTorch Lightning DataModule
+
 import os
 
 import numpy as np

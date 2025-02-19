@@ -1,3 +1,17 @@
+"""
+Data module interface for climate data processing. Currently labelled as 'experimental'
+
+This module provides the base DataModule class that handles:
+1. Loading and preprocessing of climate datasets
+2. Management of train/validation/test splits
+3. Normalization and transforms across data splits
+4. Consistent data loading interface for both map-style and shard-style datasets
+5. Metadata and climatology access for climate variables
+
+The module supports both MapDataset (all data in memory) and ShardDataset (chunked loading)
+approaches, allowing flexibility in handling large climate datasets.
+"""
+
 # Standard library
 from typing import Any, Callable, Dict, Sequence, Tuple, Union
 
