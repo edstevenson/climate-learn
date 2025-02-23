@@ -1,4 +1,5 @@
 import xarray as xr
+import xesmf as xe
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
@@ -57,6 +58,7 @@ def interpolate_to_isobaric_grid(var_native, P_native, P_levels,
       var_final : numpy array of shape (time, len(P_levels), len(lat_target), len(lon_target))
                   with the variable interpolated onto the target pressure and horizontal grid.
     """
+    
     time, nlev_native, nlat, nlon = var_native.shape
     nlev_target = len(P_levels)
     
@@ -107,6 +109,15 @@ def interpolate_to_isobaric_grid(var_native, P_native, P_levels,
             var_final[t, k, :, :] = var_horiz.reshape(nlat_target, nlon_target)
     
     return var_final
+
+
+
+
+
+
+
+
+
 
 def interpolate_to_horizontal_grid(var_native, lat_native, lon_native, lat_target, lon_target):
     """

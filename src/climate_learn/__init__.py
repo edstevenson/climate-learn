@@ -1,3 +1,5 @@
+import torch
+import torch.nn as nn
 from .utils.loaders import (
     load_model_module,
     load_forecasting_module,

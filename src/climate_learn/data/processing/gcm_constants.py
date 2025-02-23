@@ -1,5 +1,5 @@
 # ------------------- across all GCMs ------------------- #
-
+# TODO: add geopotential height / height (needed to express pressure variations?)
 SINGLE_LEVEL_VARS = [
     "olr_clear",
     "olr_cloudy",
@@ -8,15 +8,23 @@ SINGLE_LEVEL_VARS = [
     "surface_temperature",
     "surface_sw_down",
     "surface_lw_net",
-    "surface_albedo",
+    "surface_lw_down",
+    "surface_lw_up",
+    # "surface_albedo",
     "surface_pressure",
+    # "open_ocean_fraction", # TODO: these are currently not implemented in processing.py 
+    # "ice_fraction",
+    "reflected_sw_top_of_atmo_clear",
+    "reflected_sw_top_of_atmo_cloudy",
+    "incident_sw_top_of_atmo",
+    "lw_cloud_rad_forcing",
 ]
 
 STANDARDIZED_UNITS = { # units Im choosing as the standard 
-    "olr_clear": "W/m^2",
-    "olr_cloudy": "W/m^2",
-    "asr_clear": "W/m^2",
-    "asr_cloudy": "W/m^2",
+    "olr_clear": "W/m^2", # Net longwave flux at top of model (clear-sky)
+    "olr_cloudy": "W/m^2", # Net longwave flux at top of model (all-sky)
+    "asr_clear": "W/m^2", # Net solar flux at top of model (clear-sky)
+    "asr_cloudy": "W/m^2", # Net solar flux at top of model (all-sky)
     "surface_temperature": "K",
     "surface_sw_down": "W/m^2",
     "surface_lw_net": "W/m^2",
@@ -27,7 +35,7 @@ STANDARDIZED_UNITS = { # units Im choosing as the standard
     "u": "m/s",
     "v": "m/s",
     "w": "m/s",
-    "heating_sw": "K/s",
+    "heating_sw": "K/s", # derived quantities, maybe one to leave out of model?
     "heating_lw": "K/s",
     "specific_humidity": "1", # dimensionless (kg/kg)
     "relative_humidity": "1",
@@ -41,10 +49,10 @@ STANDARDIZED_UNITS = { # units Im choosing as the standard
 # ------------------- EXOCAM ------------------- #
 
 VAR_CODE_EXOCAM = {
-    "olr_clear": "FLNTC", # Net longwave flux at top of model (clear-sky)
-    "olr_cloudy": "FLNT", # Net longwave flux at top of model (all-sky)
-    "asr_clear": "FSNTC", # Net solar flux at top of model (clear-sky)
-    "asr_cloudy": "FSNT", # Net solar flux at top of model (all-sky)
+    "olr_clear": "FLNTC", # note: doesn't exist for dry cases like Ben1
+    "olr_cloudy": "FLNT", 
+    "asr_clear": "FSNTC", # note: doesn't exist for dry cases like Ben1
+    "asr_cloudy": "FSNT", 
     "surface_temperature": "TS", 
     "surface_pressure": "PS", 
     "surface_sw_down": "FSDS", 
@@ -67,31 +75,14 @@ VAR_CODE_EXOCAM = {
     "cloud_liquid_mmr": "CLDLIQ",
     "latitude": "lat",
     "longitude": "lon",
+    "level": "lev",
+    "time": "time",
 }
 
+# Add unit conversions (to the standard units at top of this file) functions here. In processing.py, if no conversion is present, the data is returned as is.
 VAR_UNIT_EXOCAM = {
-    "olr_clear":           lambda x: x,         # "W/m^2"
-    "olr_cloudy":          lambda x: x,         # "W/m^2"
-    "asr_clear":           lambda x: x,         # "W/m^2"
-    "asr_cloudy":          lambda x: x,         # "W/m^2"
-    "surface_temperature": lambda x: x,         # "K"
-    "surface_pressure":   lambda x: x,         # "Pa"
-    "surface_sw_down":     lambda x: x,         # "W/m^2"
-    "surface_lw_net":      lambda x: x,         # "W/m^2"
-    "cloud_liquid_path":   lambda x: x,         # "g/m^2"
-    "cloud_ice_path":      lambda x: x,         # "g/m^2"
-    "vapor_column":        lambda x: x,         # "kg/m^2"
-    "temperature":         lambda x: x,         # "K"
-    "U":                   lambda x: x,         # "m/s"
-    "V":                   lambda x: x,         # "m/s"
-    "OMEGA":               lambda x: x,         # "Pa/s"
-    "heating_sw":          lambda x: x,         # "K/s"
-    "heating_lw":          lambda x: x,         # "K/s"
-    "specific_humidity":   lambda x: x,         # "kg/kg" → "1"
     "relative_humidity":   lambda x: x/100,     # "%" → "1"
     "cloud_fraction":      lambda x: x/100,     # "%" → "1"
-    "cloud_ice_mmr":       lambda x: x,         # "kg/kg" → "1"
-    "cloud_liquid_mmr":    lambda x: x,         # "kg/kg" → "1"
 }
 
 # ------------------- LMDG ------------------- #
@@ -103,6 +94,7 @@ VAR_CODE_LMDG = {
     "asr_cloudy": "ASR",
     "surface_temperature": "tsurf",
     "surface_pressure": "ps",
+    "pressure": "p",
     "surface_sw_down": "fluxsurfsw",
     "surface_lw_net": "netfluxsurflw",
     # "ice_fraction": "h2o_ice_surf", # multiplied by 1000 for some reason...
@@ -116,28 +108,17 @@ VAR_CODE_LMDG = {
     "heating_sw": "zdtsw",
     "heating_lw": "zdtlw",
     "specific_humidity": "h2o_vap",
-    "cloud_fraction": "CLFt",
+    "cloud_fraction": "CLF",
+    "cloud_ice_mmr": "h2o_ice",
+    # "cloud_liquid_mmr": "?",
     # "surface_albedo": "alb_surf",
-    # TODO: h2o_ice variable a bit unclear from thai, check if CLFt is equivalent to cloud_fraction too
+    "latitude": "latitude",
+    "longitude": "longitude",
+    "level": "altitude",
+    "time": "Time"
 }
 
-VAR_UNIT_LMDG = {
-    "olr_clear":           lambda x: x,         # "W/m^2"
-    "olr_cloudy":          lambda x: x,         # "W/m^2"
-    "asr_clear":           lambda x: x,         # "W/m^2"
-    "asr_cloudy":          lambda x: x,         # "W/m^2"
-    "surface_temperature": lambda x: x,         # "K"
-    "surface_sw_down":     lambda x: x,         # "W/m^2"
-    "surface_lw_net":      lambda x: x,         # "W/m^2"
-    "temperature":         lambda x: x,         # "K"
-    "u":                   lambda x: x,         # "m/s"
-    "v":                   lambda x: x,         # "m/s"
-    "w":                   lambda x: x,         # "m/s"
-    "heating_sw":          lambda x: x,         # "K/s"
-    "heating_lw":          lambda x: x,         # "K/s"
-    "specific_humidity":   lambda x: x,         # (assumed already in kg/kg → 1)
-    "cloud_fraction":      lambda x: x,         # (assumed dimensionless)
-}
+VAR_UNIT_LMDG = {}
 
 # ------------------- ROCKE3D ------------------- #
 
@@ -149,13 +130,21 @@ VAR_CODE_ROCKE3D = {
     "incident_sw_top_of_atmo": "incsw_toa",
     # asr_clear = incident_sw_top_of_atmo - reflected_sw_top_of_atmo_clear
     "asr_cloudy": "srnf_toa",        # NET solar radiation at TOA (all-sky)
+    "specific_humidity": "q",
+    "relative_humidity": "rh",
+    "cloud_ice_mmr": "icmmr",
+    "cloud_liquid_mmr": "wcmmr",
+    "cloud_ice_fraction": "icf",
+    "cloud_liquid_fraction": "wcf",
+    # cloud_fraction is computed from cloud_ice_fraction and cloud_liquid_fraction with some overlap assumptions that i don't seem to have access to
     "surface_temperature": "tgrnd",  
     "surface_pressure": "p_surf",    
-    "surface_sw_down": "swds",       # Solar downward flux at surface
+    "surface_sw_down": "swds",      
+    "surface_lw_down": "lwds",
+    "surface_lw_up": "lwus",
     # "surface_lw_net": None,          # Not directly available (typically computed as lwds - lwus)
     # "surface_albedo": None,          # No albedo variable available in ROCKE3D data
 
-    # Additional 3D and coordinate fields:
     "temperature": "t",    # 3D temperature
     "pressure": "p_3d",
     "u": "u",              # east-west wind component
@@ -165,27 +154,17 @@ VAR_CODE_ROCKE3D = {
     "heating_lw": "lwhr",  # Longwave radiative heating rate (units: K/day)
     "latitude": "lat",
     "longitude": "lon",
+    "level": "level",
+    "time": "time"
 }
 
 VAR_UNIT_ROCKE3D = {
-    "olr_clear":                   lambda x: x,            # "W/m^2"
-    "lw_cloud_rad_forcing":        lambda x: x,            # "W/m^2"
-    "reflected_sw_top_of_atmo_clear":lambda x: x,            # "W/m^2"
-    "incident_sw_top_of_atmo":      lambda x: x,            # "W/m^2"
-    "asr_cloudy":                  lambda x: x,            # "W/m^2"
     "surface_temperature":         lambda x: x + 273.15,     # "C" → "K"
     "surface_pressure":            lambda x: x * 100,        # "mbar" → "Pa"
     "pressure":                    lambda x: x * 100,        # "mbar" → "Pa"
-    "surface_sw_down":             lambda x: x,            # "W/m^2"
-    "surface_lw_net":              lambda x: x,            # "W/m^2"
-    "temperature":                 lambda x: x,            # "K"
-    "u":                           lambda x: x,            # "m/s"
-    "v":                           lambda x: x,            # "m/s"
-    "w":                           lambda x: x,            # "m/s"
     "heating_sw":                  lambda x: x * 86400,      # "K/day" → "K/s"
     "heating_lw":                  lambda x: x * 86400,      # "K/day" → "K/s"
-    "latitude":                    lambda x: x,            # "deg"
-    "longitude":                   lambda x: x,            # "deg"
+    "relative_humidity":           lambda x: x/100,          # "%" → "1"
 }
 
 # ------------------- UM ------------------- #
@@ -220,9 +199,11 @@ VAR_CODE_UM = {
     "cloud_liquid_mmr": "STASH_m01s00i254",        # QCL AFTER TIMESTEP (mass fraction of cloud liquid water) (theta grid)
     "cloud_fraction": "STASH_m01s00i266",           # BULK CLOUD FRACTION IN EACH LAYER (theta grid)
 
-    # temperature horizontal grid
-    "latitude_t": "latitude_t",                      
-    "longitude_t": "longitude_t",
+    "open_ocean_fraction": "STASH_m01s03i395",     # OPEN OCEAN FRACTION (theta grid)
+
+    # 't' horizontal grid - this is the 'standard' grid for most variables and is equivalent to the lat/lon grid of the other non-staggered GCM grids
+    "latitude": "latitude_t",                      
+    "longitude": "longitude_t",
 
     # u horizontal grid
     "latitude_u": "latitude_cu",
@@ -236,33 +217,20 @@ VAR_CODE_UM = {
     "pressure_at_rho_levels": "STASH_m01s00i407",
     "pressure_at_theta_levels": "STASH_m01s00i408",
 
+    # levels
+    "theta_level": "thlev_eta_theta",
+    "rho_level": "rholev_eta_rho",
+
+    "time": "hourly",
+    "time_rad": "hourly_rad",
+
+    # sea level
+    "zsea_rho": "rholev_zsea_rho",
+    "zsea_theta": "thlev_zsea_theta",
+    # because of the staggered grid, surface pressure is exactly equivalent to the bottom level value of pressure_at_theta_levels (other GCMs use grid midpoints for pressure hence the separate surface pressure variable)... I think...
 }
 
-VAR_UNIT_UM = {
-    "olr_clear":               lambda x: x,      # "W/m^2"
-    "olr_cloudy":              lambda x: x,      # "W/m^2"
-    "asr_clear":               lambda x: x,      # "W/m^2"
-    "asr_cloudy":              lambda x: x,      # "W/m^2"
-    "surface_temperature":     lambda x: x,      # "K"
-    "surface_pressure":        lambda x: x,      # "Pa"
-    "surface_sw_down":         lambda x: x,      # "W/m^2"
-    "surface_lw_net":          lambda x: x,      # "W/m^2"
-    "temperature":             lambda x: x,      # "K"
-    "u":                     lambda x: x,      # "m s-1"
-    "v":                     lambda x: x,      # "m s-1"
-    "w":                     lambda x: x,      # "m s-1"
-    "heating_sw":            lambda x: x,      # "K/s"
-    "heating_lw":            lambda x: x,      # "K/s"
-    "pressure_at_rho_levels":lambda x: x,      # "Pa"
-    "pressure_at_theta_levels":lambda x: x,    # "Pa"
-    "latitude":              lambda x: x,      # "deg"
-    "longitude":             lambda x: x,      # "deg"
-    "cloud_ice_mmr":         lambda x: x,      # "1"
-    "cloud_liquid_mmr":      lambda x: x,      # "1"
-    "cloud_fraction":        lambda x: x,      # "1"
-    "specific_humidity":     lambda x: x,      # "1"
-    "relative_humidity":     lambda x: x,      # "1"
-}
+VAR_UNIT_UM = {}
 
 
 
