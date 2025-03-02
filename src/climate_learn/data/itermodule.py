@@ -4,7 +4,7 @@
 import copy
 import glob
 import os
-from typing import Dict, Optional
+from typing import Dict, Optional, Union, List
 
 # Third party
 import numpy as np
@@ -103,36 +103,44 @@ class IterDataModule(pl.LightningDataModule):
             }
             self.collate_fn = collate_fn_continuous
         elif task == "downscaling":
-            self.dataset_caller = Downscale
-            self.dataset_arg = {}
-            self.collate_fn = collate_fn
+            raise NotImplementedError("Downscaling is not implemented yet")
+            # self.dataset_caller = Downscale
+            # self.dataset_arg = {}
+            # self.collate_fn = collate_fn
 
-        # Set up file lists for each data partition
-        self.inp_lister_train = sorted(
+        # make sure the data in the dataset folders are sorted
+        self.inp_file_list_train = sorted(
             glob.glob(os.path.join(inp_root_dir, "train", "*.npz"))
         )
-        self.out_lister_train = sorted(
+        self.out_file_list_train = sorted(
             glob.glob(os.path.join(out_root_dir, "train", "*.npz"))
         )
-        self.inp_lister_val = sorted(
+        self.inp_file_list_val = sorted(
             glob.glob(os.path.join(inp_root_dir, "val", "*.npz"))
         )
-        self.out_lister_val = sorted(
+        self.out_file_list_val = sorted(
             glob.glob(os.path.join(out_root_dir, "val", "*.npz"))
         )
-        self.inp_lister_test = sorted(
+        self.inp_file_list_test = sorted(
             glob.glob(os.path.join(inp_root_dir, "test", "*.npz"))
         )
-        self.out_lister_test = sorted(
+        self.out_file_list_test = sorted(
             glob.glob(os.path.join(out_root_dir, "test", "*.npz"))
         )
+        
+        # Check which datasets exist
+        self.has_train_files = len(self.inp_file_list_train) > 0 and len(self.out_file_list_train) > 0
+        self.has_val_files = len(self.inp_file_list_val) > 0 and len(self.out_file_list_val) > 0
+        self.has_test_files = len(self.inp_file_list_test) > 0 and len(self.out_file_list_test) > 0
 
         self.transforms = self.get_normalize(inp_root_dir, in_vars)
         self.output_transforms = self.get_normalize(out_root_dir, out_vars)
 
+        # Initialize datasets
         self.data_train: Optional[IterableDataset] = None
         self.data_val: Optional[IterableDataset] = None
         self.data_test: Optional[IterableDataset] = None
+        
 
     def get_lat_lon(self):
         lat = np.load(os.path.join(self.hparams.out_root_dir, "lat.npy"))
@@ -140,10 +148,7 @@ class IterDataModule(pl.LightningDataModule):
         return lat, lon
 
     def get_data_variables(self):
-        out_vars = copy.deepcopy(self.hparams.out_vars)
-        if "2m_temperature_extreme_mask" in out_vars:
-            out_vars.remove("2m_temperature_extreme_mask")
-        return self.hparams.in_vars, out_vars
+        return self.hparams.in_vars, self.hparams.out_vars
 
     def get_data_dims(self):
         lat = len(np.load(os.path.join(self.hparams.out_root_dir, "lat.npy")))
@@ -164,19 +169,33 @@ class IterDataModule(pl.LightningDataModule):
                     lon,
                 ]
             )
-        # Shape: [batch, variables, lat, lon] for downscaling
-        elif self.hparams.task == "downscaling":
-            in_size = torch.Size(
-                [self.hparams.batch_size, len(self.hparams.in_vars), lat, lon]
+        else:
+            raise ValueError(
+                f"Unsupported task type: '{self.hparams.task}'. "
+                f"Supported tasks are: {forecasting_tasks}"
             )
-        ##TODO: change out size
-        out_vars = copy.deepcopy(self.hparams.out_vars)
-        if "2m_temperature_extreme_mask" in out_vars:
-            out_vars.remove("2m_temperature_extreme_mask")
-        out_size = torch.Size([self.hparams.batch_size, len(out_vars), lat, lon])
+        out_size = torch.Size([self.hparams.batch_size, len(self.hparams.out_vars), lat, lon])
         return in_size, out_size
 
     def get_normalize(self, root_dir, variables):
+        """
+        Get normalization transforms for the specified variables.
+        
+        Loads mean and standard deviation values from npz files and creates
+        normalization transforms for each variable.
+        
+        Parameters
+        ----------
+        root_dir : str
+            Directory containing normalization statistics files
+        variables : List[str]
+            List of variable names to create transforms for
+            
+        Returns
+        -------
+        Dict[str, transforms.Normalize]
+            Dictionary mapping variable names to normalization transforms
+        """
         normalize_mean = dict(np.load(os.path.join(root_dir, "normalize_mean.npz")))
         normalize_std = dict(np.load(os.path.join(root_dir, "normalize_std.npz")))
         return {
@@ -187,18 +206,14 @@ class IterDataModule(pl.LightningDataModule):
     def get_out_transforms(self):
         out_transforms = {}
         for key in self.output_transforms.keys():
-            if key == "2m_temperature_extreme_mask":
-                continue
             out_transforms[key] = self.output_transforms[key]
         return out_transforms
 
-    def get_climatology(self, split="val"):
+    def get_climatology(self, split):
         path = os.path.join(self.hparams.out_root_dir, split, "climatology.npz")
         clim_dict = np.load(path)
         new_clim_dict = {}
         for var in self.hparams.out_vars:
-            if var == "2m_temperature_extreme_mask":
-                continue
             new_clim_dict[var] = torch.from_numpy(
                 np.squeeze(clim_dict[var].astype(np.float32), axis=0)
             )
@@ -206,84 +221,70 @@ class IterDataModule(pl.LightningDataModule):
 
     def setup(self, stage: Optional[str] = None):
         """
-        Set up datasets for training, validation, and testing.
+        Assign training, validation, and testing datasets.
         
         Creates dataset objects with appropriate configurations for each split:
         - Training: Includes shuffling and data augmentation
         - Validation/Test: No shuffling, used for evaluation
         
         Args:
-            stage: Optional stage identifier ('fit' or 'test')
+            stage: Optional stage identifier ("fit" or "test")
         """
-        # load datasets only if they're not loaded already
+        # Common dataset arguments
+        base_dataset_args = {
+            "variables": self.hparams.in_vars,
+            "out_variables": self.hparams.out_vars,
+        }
+        
+        iter_args = {
+            "transforms": self.transforms,
+            "output_transforms": self.output_transforms, 
+            "subsample": self.hparams.subsample
+        }
+
+        # Create test dataset if test files exist
+        if self.has_test_files:
+            test_reader = NpyReader(
+                inp_file_list=self.inp_file_list_test,
+                out_file_list=self.out_file_list_test,
+                shuffle=False,
+                **base_dataset_args
+            )
+            self.data_test = IndividualDataIter(
+                self.dataset_caller(test_reader, **self.dataset_arg),
+                **iter_args
+            )
+
+        # Create training and validation datasets if in training mode
         if stage != "test":
-            if not self.data_train and not self.data_val and not self.data_test:
+            # Create training dataset with shuffling if train files exist
+            if self.has_train_files and not self.data_train:
+                train_reader = NpyReader(
+                    inp_file_list=self.inp_file_list_train,
+                    out_file_list=self.out_file_list_train,
+                    shuffle=True,
+                    **base_dataset_args
+                )
                 self.data_train = ShuffleIterableDataset(
                     IndividualDataIter(
-                        self.dataset_caller(
-                            NpyReader(
-                                inp_file_list=self.inp_lister_train,
-                                out_file_list=self.out_lister_train,
-                                variables=self.hparams.in_vars,
-                                out_variables=self.hparams.out_vars,
-                                shuffle=True,
-                            ),
-                            **self.dataset_arg,
-                        ),
-                        transforms=self.transforms,
-                        output_transforms=self.output_transforms,
-                        subsample=self.hparams.subsample,
+                        self.dataset_caller(train_reader, **self.dataset_arg),
+                        **iter_args
                     ),
-                    buffer_size=self.hparams.buffer_size,
+                    buffer_size=self.hparams.buffer_size
                 )
 
+            # Create validation dataset if val files exist
+            if self.has_val_files and not self.data_val:
+                val_reader = NpyReader(
+                    inp_file_list=self.inp_file_list_val,
+                    out_file_list=self.out_file_list_val,
+                    shuffle=False,
+                    **base_dataset_args
+                )
                 self.data_val = IndividualDataIter(
-                    self.dataset_caller(
-                        NpyReader(
-                            inp_file_list=self.inp_lister_val,
-                            out_file_list=self.out_lister_val,
-                            variables=self.hparams.in_vars,
-                            out_variables=self.hparams.out_vars,
-                            shuffle=False,
-                        ),
-                        **self.dataset_arg,
-                    ),
-                    transforms=self.transforms,
-                    output_transforms=self.output_transforms,
-                    subsample=self.hparams.subsample,
+                    self.dataset_caller(val_reader, **self.dataset_arg),
+                    **iter_args
                 )
-
-                self.data_test = IndividualDataIter(
-                    self.dataset_caller(
-                        NpyReader(
-                            inp_file_list=self.inp_lister_test,
-                            out_file_list=self.out_lister_test,
-                            variables=self.hparams.in_vars,
-                            out_variables=self.hparams.out_vars,
-                            shuffle=False,
-                        ),
-                        **self.dataset_arg,
-                    ),
-                    transforms=self.transforms,
-                    output_transforms=self.output_transforms,
-                    subsample=self.hparams.subsample,
-                )
-        else:
-            self.data_test = IndividualDataIter(
-                self.dataset_caller(
-                    NpyReader(
-                        inp_file_list=self.inp_lister_test,
-                        out_file_list=self.out_lister_test,
-                        variables=self.hparams.in_vars,
-                        out_variables=self.hparams.out_vars,
-                        shuffle=False,
-                    ),
-                    **self.dataset_arg,
-                ),
-                transforms=self.transforms,
-                output_transforms=self.output_transforms,
-                subsample=self.hparams.subsample,
-            )
 
     def train_dataloader(self):
         return DataLoader(
@@ -296,6 +297,8 @@ class IterDataModule(pl.LightningDataModule):
         )
 
     def val_dataloader(self):
+        if not self.data_val:
+            return None
         return DataLoader(
             self.data_val,
             batch_size=self.hparams.batch_size,
@@ -307,6 +310,8 @@ class IterDataModule(pl.LightningDataModule):
         )
 
     def test_dataloader(self):
+        if not self.data_test:
+            return None
         return DataLoader(
             self.data_test,
             batch_size=self.hparams.batch_size,
@@ -317,21 +322,21 @@ class IterDataModule(pl.LightningDataModule):
             collate_fn=self.collate_fn,
         )
 
+# -------------------- helper functions --------------------
 
 def collate_fn(batch):
     """
-    Collate function for batching data samples.
+    Collate function for batching data samples for direct/iterative forecasting tasks.
     
     Handles:
     1. Converting dictionary features to tensors
     2. Stacking batches of samples
-    3. Special processing for extreme temperature masks
     
     Args:
         batch: List of (input, output) tuples
         
     Returns:
-        Tuple of (inputs, outputs, [mask], variable_names) where mask is optional
+        Tuple of (inputs, outputs, variable_names)
     """
     def handle_dict_features(t: Dict[str, torch.tensor]) -> torch.tensor:
         t = torch.stack(tuple(t.values()))
@@ -340,41 +345,15 @@ def collate_fn(batch):
         return t
 
     inp = torch.stack([handle_dict_features(batch[i][0]) for i in range(len(batch))])
-    has_extreme_mask = False
-    for key in batch[0][1]:
-        if key == "2m_temperature_extreme_mask":
-            has_extreme_mask = True
-    if not has_extreme_mask:
-        out = torch.stack(
-            [handle_dict_features(batch[i][1]) for i in range(len(batch))]
-        )
-        variables = list(batch[0][0].keys())
-        out_variables = list(batch[0][1].keys())
-        return inp, out, variables, out_variables
-    out = []
-    mask = []
-    for i in range(len(batch)):
-        out_dict = {}
-        mask_dict = {}
-        for key in batch[i][1]:
-            if key == "2m_temperature_extreme_mask":
-                mask_dict[key] = batch[i][1][key]
-            else:
-                out_dict[key] = batch[i][1][key]
-        out.append(handle_dict_features(out_dict))
-        if mask_dict != {}:
-            mask.append(handle_dict_features(mask_dict))
-    out = torch.stack(out)
-    if mask != []:
-        mask = torch.stack(mask)
+    out = torch.stack([handle_dict_features(batch[i][1]) for i in range(len(batch))])
     variables = list(batch[0][0].keys())
-    out_variables = list(out_dict.keys())
-    return inp, out, mask, variables, out_variables
+    out_variables = list(batch[0][1].keys())
+    return inp, out, variables, out_variables
 
 
 def collate_fn_continuous(batch):
     """
-    Collate function for continuous forecasting tasks.
+    Collate function for batching data samples for continuous forecasting tasks.
     """
     def handle_dict_features(t: Dict[str, torch.tensor]) -> torch.tensor:
         t = torch.stack(tuple(t.values()))

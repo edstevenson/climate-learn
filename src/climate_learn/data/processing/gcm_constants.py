@@ -6,10 +6,10 @@ SINGLE_LEVEL_VARS = [
     "asr_clear",
     "asr_cloudy",
     "surface_temperature",
-    "surface_sw_down",
-    "surface_lw_net",
-    "surface_lw_down",
-    "surface_lw_up",
+    "surface_sw_down", # total downward shortwave flux at surface
+    "surface_lw_net", # net downward longwave flux at surface
+    "surface_lw_down", # downward longwave flux at surface
+    "surface_lw_up", # upward longwave flux at surface
     # "surface_albedo",
     "surface_pressure",
     # "open_ocean_fraction", # TODO: these are currently not implemented in processing.py 
@@ -197,7 +197,7 @@ VAR_CODE_UM = {
     # moisture variables
     "cloud_ice_mmr": "STASH_m01s00i012",           # QCF AFTER TIMESTEP (mass fraction of cloud ice) (theta grid)
     "cloud_liquid_mmr": "STASH_m01s00i254",        # QCL AFTER TIMESTEP (mass fraction of cloud liquid water) (theta grid)
-    "cloud_fraction": "STASH_m01s00i266",           # BULK CLOUD FRACTION IN EACH LAYER (theta grid)
+    "cloud_fraction": "STASH_m01s00i266",          # BULK CLOUD FRACTION IN EACH LAYER (theta grid)
 
     "open_ocean_fraction": "STASH_m01s03i395",     # OPEN OCEAN FRACTION (theta grid)
 

@@ -58,7 +58,7 @@ class GCMDataset(ABC):
         """
         target_grid = xr.Dataset(
             {"lat": (["lat"], lat_target),
-            "lon": (["lon"], lon_target)},
+             "lon": (["lon"], lon_target)},
         )
         # Rename coordinate names to "lat" and "lon" (xESMF requires these names).
         ds = self.ds.rename({self.VAR_CODE["latitude"]: "lat", self.VAR_CODE["longitude"]: "lon"})
@@ -74,6 +74,11 @@ class GCMDataset(ABC):
         regridder = xe.Regridder(ds, target_grid, method="bilinear", periodic=True)
         
         ds_out = regridder(ds, keep_attrs=False)
+
+        # Check if the temperature array has any NaNs after horizontal regridding - this functions as a test of the regridding
+        if self.VAR_CODE["temperature"] in ds_out:
+            if np.isnan(ds_out[self.VAR_CODE["temperature"]].values).any():
+                raise ValueError("Warning: NaNs detected in temperature after horizontal regridding.")
 
         self.ds = ds_out
         return self.ds
@@ -92,6 +97,9 @@ class GCMDataset(ABC):
 
         ds_out = xr.Dataset(coords=self.ds.coords)
         pressure_str = self.VAR_CODE.get('pressure', 'pressure')
+        pressure_conversion_fn = self.VAR_UNIT.get('pressure', lambda x: x)
+        native_pressure = pressure_conversion_fn(self.ds[pressure_str])
+
         # Iterate over each data variable in the dataset
         for code, da in self.ds.data_vars.items():
             if self.VAR_CODE["level"] in da.dims and da.ndim == 4 and code != pressure_str:
@@ -100,7 +108,7 @@ class GCMDataset(ABC):
                     da,
                     'Z',
                     P_levels,
-                    target_data=self.ds[pressure_str],
+                    target_data=native_pressure,
                     method="log"
                 )
                 # xgcm by default puts the new vertical axis at the end, e.g.
@@ -118,6 +126,12 @@ class GCMDataset(ABC):
         
         # Rename the pressure coordinate  to 'isobar' (sometimes used for derived variables)
         ds_out = ds_out.rename_dims({pressure_str: "isobar"}).rename_vars({pressure_str: "isobar"})
+
+        # Check if the temperature array has any NaNs after vertical regridding - this functions as a test to ensure P_LEVELS are within the range of the native pressure field
+        if self.VAR_CODE["temperature"] in ds_out:
+            if np.isnan(ds_out[self.VAR_CODE["temperature"]].values).any():
+                raise ValueError("Warning: NaNs detected in temperature after vertical regridding.")
+
         self.ds = ds_out
         return self.ds
     
@@ -131,10 +145,33 @@ class GCMDataset(ABC):
         
     def close(self):
         self.ds.close()
+ 
+    def _split_3d_variables_by_level(self, variables_dict: dict):
+        result_dict = {}
+        
+        for var_name, data in variables_dict.items():
+            # Check if this is a 3D variable (has a level dimension)
+            if len(data.shape) == 4 and data.shape[1] > 1:  # Shape: (time, level, lat, lon)
+                # This is a 3D variable with multiple levels
+                for level_idx in range(data.shape[1]):
+                    # Extract data for this level and add singleton dimension to maintain shape (time, 1, lat, lon)
+                    level_data = data[:, level_idx:level_idx+1, :, :]
+                    
+                    # Create new variable name with level index (0-based)
+                    new_var_name = f"{var_name}_{level_idx}"
+                        
+                    result_dict[new_var_name] = level_data
+                    
+            else:
+                # For 2D variables or variables that already have only one level, keep as is
+                result_dict[var_name] = data
+                
+        return result_dict
 
     def to_npz(self, save_dir: str, variables: list[str],
                lat_target: np.ndarray, lon_target: np.ndarray,
-               P_levels: np.ndarray, shard_size: int | None = None, progress_bar: bool = False):
+               P_levels: np.ndarray, shard_size: int | None = None, 
+               all_2d: bool = True, progress_bar: bool = False):
         """
         Converts the dataset to NumPy files with standardized variables.
 
@@ -148,6 +185,11 @@ class GCMDataset(ABC):
           If `shard_size` is provided and less than the total time dimension,
           the data is split into shards of fixed size (the last shard contains the remainder).
           If `shard_size` is None or larger than the total time dimension, the entire data is saved in one file.
+          
+        Level Splitting:
+          If `all_2d` is True, 3D variables with multiple vertical levels are split into
+          separate 2D variables for each pressure level, named with the pattern "{var_name}_{level_idx}".
+          If False, variables are kept in their original form.
         """
         # Regrid dataset to isobaric pressure grid.
         self.regrid(P_levels, lat_target, lon_target)
@@ -161,6 +203,10 @@ class GCMDataset(ABC):
                 out_vars = {var: self.load_variable(var) for var in variables}
         else:
             out_vars = {var: self.load_variable(var) for var in variables}
+
+        # Split 3D variables if requested
+        if all_2d:
+            out_vars = self._split_3d_variables_by_level(out_vars)
 
         # Compute normalization statistics and climatology.
         normalize_mean = {}
@@ -197,12 +243,16 @@ class GCMDataset(ABC):
         # Save metadata: target latitude and longitude.
         np.save(os.path.join(save_dir, "lat.npy"), lat_target)
         np.save(os.path.join(save_dir, "lon.npy"), lon_target)
+        
+        # Also save pressure level information for reference
+        np.save(os.path.join(save_dir, "isobar.npy"), P_levels)
 
         print(f'\033[1mnp data saved to {save_dir}\033[0m')
     
         self.close()
 
 
+       
 class ExoCAMDataset(GCMDataset):
     def __init__(self, nc_files: list[str] | str, 
                  g: float | None = None, 
@@ -214,9 +264,9 @@ class ExoCAMDataset(GCMDataset):
         self.g = g       
         self.R_d = R_d  
         self.R_v = R_v
-        self.add_pressure()   # Add pressure to the dataset for use in regridding
+        self._add_pressure()   # Add pressure to the dataset for use in regridding
 
-    def add_pressure(self):
+    def _add_pressure(self):
         """
         Computes the 4D pressure field for ExoCAM data using:
             P = hyam * P0 + hybm * PS
@@ -248,7 +298,7 @@ class ExoCAMDataset(GCMDataset):
             )
         )
     
-    def compute_w(self):
+    def _compute_w(self):
         """
         Calculates the vertical velocity w (m/s) from the OMEGA variable.
         Calculates density as an intermediate step.
@@ -261,7 +311,7 @@ class ExoCAMDataset(GCMDataset):
             np.ndarray: Vertical velocity w in m/s
         """
         if any(x is None for x in [self.g, self.R_d, self.R_v]):
-                raise ValueError("Must provide g, R_d and R_v constants to ExoCAM constructor to compute vertical velocity w from OMEGA")
+            raise ValueError("Must provide g, R_d and R_v constants to ExoCAM constructor to compute vertical velocity w from OMEGA")
         
         OMEGA = super().load_variable("OMEGA")
         T = super().load_variable("temperature") 
@@ -276,8 +326,8 @@ class ExoCAMDataset(GCMDataset):
         """
         Loads a variable from the dataset using the passed constants, and unsqueezes the variables to 4D (time, level, lat, lon).
         """
-        if var == "w":
-            return self.compute_w()
+        if var == "w":  
+            return self._compute_w()
         return super().load_variable(var)
       
 
@@ -365,7 +415,6 @@ class UMDataset(GCMDataset):
 
         # Rechunk the entire dataset along the time dimension, with the vertical dimensions unchunked.
         self.ds = ds.chunk({time: 256, self.VAR_CODE["theta_level"]: -1, self.VAR_CODE["rho_level"]: -1})
-        print(self.ds.chunks)
 
 
     def load_variable(self, var: str):
@@ -445,7 +494,7 @@ class UMDataset(GCMDataset):
 
         ds_out = xr.Dataset(coords=self.ds.coords)
         theta_pressure_str = self.VAR_CODE.get('pressure_at_theta_levels', 'pressure_at_theta_levels')
-        rho_pressure_str = self.VAR_CODE.get('pressure_at_rho_levels', 'pressure_at_rho_levels')
+        rho_pressure_str = self.VAR_CODE.get('pressure_at_rho_levels', 'pressure_at_rho_levels') # (don't need to apply conversion here as pressure is already in Pa)
 
         # Iterate over each data variable in the dataset
         for code, da in self.ds.data_vars.items():

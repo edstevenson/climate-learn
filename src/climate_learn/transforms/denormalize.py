@@ -3,7 +3,7 @@ from typing import Union
 
 # Local application
 from .registry import register
-from ..data import IterDataModule
+from ..data.itermodule import IterDataModule
 
 # Third party
 import torch

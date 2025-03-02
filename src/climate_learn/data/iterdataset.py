@@ -29,6 +29,14 @@ class NpyReader(IterableDataset):
     This class loads inputs and outputs from corresponding .npy files, filtering out any paths
     that contain the substring "climatology". Optionally, the file lists can be shuffled.
 
+    Yields: 
+        inp: input data
+        out: output data
+        variables: list of (input) variables
+        out_variables: list of output variables
+
+    Currenlty requires all the variables to be of shape (time, 1, lat, lon)
+
     Parameters:
         inp_file_list: List of file paths for input data.
         out_file_list: List of file paths for output data.
@@ -41,11 +49,12 @@ class NpyReader(IterableDataset):
         inp_file_list,
         out_file_list,
         variables,
-        out_variables,
+        out_variables=None,
         shuffle=False,
     ):
         super().__init__()
         assert len(inp_file_list) == len(out_file_list)
+
         # Exclude files with "climatology" from file lists.
         self.inp_file_list = [f for f in inp_file_list if "climatology" not in f]
         self.out_file_list = [f for f in out_file_list if "climatology" not in f]
@@ -59,20 +68,21 @@ class NpyReader(IterableDataset):
 
         If shuffling is enabled, file lists are shuffled. Moreover, if running in a
         multi-worker/distributed setting, each worker is assigned a distinct subset of the data.
+
         """
         if self.shuffle:
             self.inp_file_list, self.out_file_list = shuffle_two_list(
                 self.inp_file_list, self.out_file_list
             )
 
-        n_files = len(self.inp_file_list)
+        num_files = len(self.inp_file_list)
 
         # Get worker info for potential multi-threaded or distributed loading
         worker_info = torch.utils.data.get_worker_info()
         if worker_info is None:
             # Single-process scenario
             iter_start = 0
-            iter_end = n_files
+            iter_end = num_files
         else:
             # Multi-worker: split data among workers and (if applicable) among distributed processes
             if not torch.distributed.is_initialized():
@@ -83,7 +93,7 @@ class NpyReader(IterableDataset):
                 world_size = torch.distributed.get_world_size()
             num_workers_per_ddp = worker_info.num_workers
             num_shards = num_workers_per_ddp * world_size
-            per_worker = n_files // num_shards
+            per_worker = num_files // num_shards
             worker_id = rank * num_workers_per_ddp + worker_info.id
             iter_start = worker_id * per_worker
             iter_end = iter_start + per_worker
@@ -114,12 +124,18 @@ class DirectForecast(IterableDataset):
     - Rolling window processing for temporal data
     - Different data sources (ERA5, MPI-ESM) with different temporal resolutions
     
+    Yields:
+        inp: Dictionary containing input data tensors with `history` number of time steps of context (`history * window` hours)
+        out: Dictionary containing target output data tensors at `pred_range` hrs ahead
+        variables: List of input variable names used for the forecast
+        out_variables: List of output variable names to be predicted
+    
     Args:
         dataset: Base dataset providing the data
         src: Source dataset type ('era5' or 'mpi-esm1-2-hr')
-        pred_range: Number of time steps to predict ahead
+        pred_range: time to predict ahead in hours
         history: Number of historical time steps to use
-        window: Size of rolling window for temporal processing
+        window: Size of rolling window for temporal processing in hours
     """
     def __init__(self, dataset, src, pred_range=6, history=3, window=6):
         super().__init__()
@@ -127,11 +143,11 @@ class DirectForecast(IterableDataset):
         self.history = history
         # Adjust prediction range and window size based on data source
         if src == "era5":
-            print("ERA5 case")
+            # these datasets are hourly
             self.pred_range = pred_range
             self.window = window
-        elif src == "mpi-esm1-2-hr":
-            print("MPI-ESM case")
+        elif src in ["mpi-esm1-2-hr", "thai"]:
+            # these datasets are 6-hourly
             assert pred_range % 6 == 0
             assert window % 6 == 0
             self.pred_range = pred_range // 6
@@ -172,7 +188,7 @@ class DirectForecast(IterableDataset):
             # Prepare input sequences
             inp_data = {
                 k: inp_data[k][:, :last_idx].transpose(0, 1)
-                for k in inp_data.keys()  # Shape: [N, T, H, W]
+                for k in inp_data.keys()  
             }
 
             # Calculate output indices based on prediction range
@@ -216,6 +232,9 @@ class ContinuousForecast(IterableDataset):
         self.hrs_each_step = hrs_each_step
         self.history = history
         self.window = window
+        print("\033[93mWarning: ContinuousForecast has not been re-implemented for GCM datasets. "
+              "Use with caution.\033[0m")
+        
 
     def __iter__(self):
         for inp_data, out_data, variables, out_variables in self.dataset:
@@ -277,6 +296,8 @@ class Downscale(IterableDataset):
     def __init__(self, dataset):
         super().__init__()
         self.dataset = dataset
+        print("\033[93mWarning: Downscale has not been re-implemented for GCM datasets. "
+              "Use with caution.\033[0m")
 
     def __iter__(self):
         for inp_data, out_data, variables, out_variables in self.dataset:
@@ -292,12 +313,27 @@ class Downscale(IterableDataset):
 
 
 class IndividualDataIter(IterableDataset):
+    """
+    Iterable dataset that processes individual data samples from underlying datasets.
+    
+    This class handles:
+    1. Iterating through samples from forecasting or downscaling datasets
+    2. Applying transformations to input and output data
+    3. Subsampling data at specified intervals
+    4. Yielding properly formatted samples for model training
+    
+    Parameters:
+        dataset: Source dataset (DirectForecast, ContinuousForecast, or Downscale)
+        transforms: Dictionary of transformations to apply to input data
+        output_transforms: Dictionary of transformations to apply to output data
+        subsample: Interval for subsampling data points
+    """
     def __init__(
         self,
         dataset,
         transforms,
         output_transforms,
-        subsample=6,
+        subsample,
     ):
         super().__init__()
         self.dataset = dataset
@@ -344,7 +380,6 @@ class IndividualDataIter(IterableDataset):
                 elif isinstance(self.dataset, ContinuousForecast):
                     result = x, y, lead_times[i], variables, out_variables
                 yield result
-
 
 class ShuffleIterableDataset(IterableDataset):
     """

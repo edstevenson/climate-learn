@@ -120,6 +120,8 @@ class LitModule(pl.LightningModule):
         x, y, in_variables, out_variables = batch
         yhat = self(x).to(device=y.device)
         yhat = self.replace_constant(y, yhat, out_variables)
+        
+        # Determine which loss functions and transforms to use based on stage
         if stage == "val":
             loss_fns = self.val_loss
             transforms = self.val_target_transforms
@@ -128,6 +130,12 @@ class LitModule(pl.LightningModule):
             transforms = self.test_target_transforms
         else:
             raise RuntimeError("Invalid evaluation stage")
+            
+        # Return empty dict if no loss functions are defined for this stage
+        if loss_fns is None or len(loss_fns) == 0:
+            print(f"Warning: No loss functions defined for {stage} stage. Skipping evaluation. Is there a val/test set in this datamodule?")
+            return {}
+            
         loss_dict = {}
         for i, lf in enumerate(loss_fns):
             if transforms is not None and transforms[i] is not None:
